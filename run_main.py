@@ -30,6 +30,8 @@ np.random.seed(fix_seed)
 parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
                     help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
+parser.add_argument('--is_testing', type=int, default=1, help='Set to 1 for testing after training, 0 to skip testing')
+
 parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
 parser.add_argument('--model_comment', type=str, required=True, default='none', help='prefix when saving test results')
 parser.add_argument('--model', type=str, required=True, default='Autoformer',
@@ -102,6 +104,7 @@ args = parser.parse_args()
 ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 deepspeed_plugin = DeepSpeedPlugin(hf_ds_config='./ds_config_zero2.json')
 accelerator = Accelerator(kwargs_handlers=[ddp_kwargs], deepspeed_plugin=deepspeed_plugin)
+fitted_scaler = None  # Global variable to store the fitted scaler
 
 for ii in range(args.itr):
     # setting record of experiments
@@ -123,9 +126,6 @@ for ii in range(args.itr):
         args.embed,
         args.des, ii)
 
-    train_data, train_loader = data_provider(args, 'train')
-    vali_data, vali_loader = data_provider(args, 'val')
-    test_data, test_loader = data_provider(args, 'test')
 
     if args.model == 'Autoformer':
         model = Autoformer.Model(args).float()
@@ -164,36 +164,70 @@ for ii in range(args.itr):
     criterion = nn.MSELoss()
     mae_metric = nn.L1Loss()
 
-    train_loader, vali_loader, test_loader, model, model_optim, scheduler = accelerator.prepare(
-        train_loader, vali_loader, test_loader, model, model_optim, scheduler)
-
     if args.use_amp:
         scaler = torch.cuda.amp.GradScaler()
 
-    for epoch in range(args.train_epochs):
-        iter_count = 0
-        train_loss = []
+    if args.is_training == 1:
+        
+        print("Starting Training...")
+        # Train Loader
+        train_data, train_loader = data_provider(args, 'train')
 
-        model.train()
-        epoch_time = time.time()
-        for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(train_loader)):
-            iter_count += 1
-            model_optim.zero_grad()
+        # Save scaler if the dataset supports scaling (e.g., Dataset_T1DM)
+        if hasattr(train_data, 'scaler'):
+            fitted_scaler = train_data.scaler
 
-            batch_x = batch_x.float().to(accelerator.device)
-            batch_y = batch_y.float().to(accelerator.device)
-            batch_x_mark = batch_x_mark.float().to(accelerator.device)
-            batch_y_mark = batch_y_mark.float().to(accelerator.device)
+        # Validation Loader
+        vali_data, vali_loader = data_provider(args, 'val')
+        
+        # Test Loader (used only if is_testing == 1)
+        if args.is_testing == 1:
+            test_data, test_loader = data_provider(args, 'test')
+            if hasattr(test_data, 'set_scaler') and callable(test_data.set_scaler):
+                test_data.set_scaler(fitted_scaler)
+            train_loader, vali_loader, test_loader, model, model_optim, scheduler = accelerator.prepare(
+            train_loader, vali_loader, test_loader, model, model_optim, scheduler
+        )
+        else:
+            train_loader, vali_loader, model, model_optim, scheduler = accelerator.prepare(
+            train_loader, vali_loader, model, model_optim, scheduler
+            )
+            
 
-            # decoder input
-            dec_inp = torch.zeros_like(batch_y[:, -args.pred_len:, :]).float().to(
-                accelerator.device)
-            dec_inp = torch.cat([batch_y[:, :args.label_len, :], dec_inp], dim=1).float().to(
-                accelerator.device)
+        
+        for epoch in range(args.train_epochs):
+            iter_count = 0
+            train_loss = []
 
-            # encoder - decoder
-            if args.use_amp:
-                with torch.cuda.amp.autocast():
+            model.train()
+            epoch_time = time.time()
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(train_loader)):
+                iter_count += 1
+                model_optim.zero_grad()
+
+                batch_x = batch_x.float().to(accelerator.device)
+                batch_y = batch_y.float().to(accelerator.device)
+                batch_x_mark = batch_x_mark.float().to(accelerator.device)
+                batch_y_mark = batch_y_mark.float().to(accelerator.device)
+
+                # decoder input
+                dec_inp = torch.zeros_like(batch_y[:, -args.pred_len:, :]).float().to(accelerator.device)
+                dec_inp = torch.cat([batch_y[:, :args.label_len, :], dec_inp], dim=1).float().to(accelerator.device)
+
+                # encoder - decoder
+                if args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        if args.output_attention:
+                            outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                        else:
+                            outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
+                        f_dim = -1 if args.features == 'MS' else 0
+                        outputs = outputs[:, -args.pred_len:, f_dim:]
+                        batch_y = batch_y[:, -args.pred_len:, f_dim:].to(accelerator.device)
+                        loss = criterion(outputs, batch_y)
+                        train_loss.append(loss.item())
+                else:
                     if args.output_attention:
                         outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                     else:
@@ -201,67 +235,75 @@ for ii in range(args.itr):
 
                     f_dim = -1 if args.features == 'MS' else 0
                     outputs = outputs[:, -args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -args.pred_len:, f_dim:].to(accelerator.device)
+                    batch_y = batch_y[:, -args.pred_len:, f_dim:]
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
-            else:
-                if args.output_attention:
-                    outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+
+                if (i + 1) % 100 == 0:
+                    accelerator.print(
+                        "\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
+                    speed = (time.time() - time_now) / iter_count
+                    left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
+                    accelerator.print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
+                    iter_count = 0
+                    time_now = time.time()
+
+                if args.use_amp:
+                    scaler.scale(loss).backward()
+                    scaler.step(model_optim)
+                    scaler.update()
                 else:
-                    outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    accelerator.backward(loss)
+                    model_optim.step()
 
-                f_dim = -1 if args.features == 'MS' else 0
-                outputs = outputs[:, -args.pred_len:, f_dim:]
-                batch_y = batch_y[:, -args.pred_len:, f_dim:]
-                loss = criterion(outputs, batch_y)
-                train_loss.append(loss.item())
+                if args.lradj == 'TST':
+                    adjust_learning_rate(accelerator, model_optim, scheduler, epoch + 1, args, printout=False)
+                    scheduler.step()
 
-            if (i + 1) % 100 == 0:
+            accelerator.print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
+            train_loss = np.average(train_loss)
+            vali_loss, vali_mae_loss = vali(args, accelerator, model, vali_data, vali_loader, criterion, mae_metric)
+            accelerator.print(
+                "Epoch: {0} | Train Loss: {1:.7f} Vali Loss: {2:.7f}".format(
+                    epoch + 1, train_loss, vali_loss))
+            
+            if args.is_testing == 1:
+                test_loss, test_mae_loss = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
                 accelerator.print(
-                    "\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
-                speed = (time.time() - time_now) / iter_count
-                left_time = speed * ((args.train_epochs - epoch) * train_steps - i)
-                accelerator.print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                iter_count = 0
-                time_now = time.time()
+                    "Epoch: {0} | Test Loss: {1:.7f} Test MAE Loss: {2:.7f}".format(
+                        epoch + 1, test_loss, test_mae_loss))
 
-            if args.use_amp:
-                scaler.scale(loss).backward()
-                scaler.step(model_optim)
-                scaler.update()
+            early_stopping(vali_loss, model, path)
+            if early_stopping.early_stop:
+                accelerator.print("Early stopping")
+                break
+
+            if args.lradj != 'TST':
+                if args.lradj == 'COS':
+                    scheduler.step()
+                    accelerator.print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
+                else:
+                    if epoch == 0:
+                        args.learning_rate = model_optim.param_groups[0]['lr']
+                        accelerator.print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
+                    adjust_learning_rate(accelerator, model_optim, scheduler, epoch + 1, args, printout=True)
             else:
-                accelerator.backward(loss)
-                model_optim.step()
+                accelerator.print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
 
-            if args.lradj == 'TST':
-                adjust_learning_rate(accelerator, model_optim, scheduler, epoch + 1, args, printout=False)
-                scheduler.step()
+    elif args.is_training == 0 and args.is_testing == 1:
+        print("Starting Testing...")
 
-        accelerator.print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
-        train_loss = np.average(train_loss)
-        vali_loss, vali_mae_loss = vali(args, accelerator, model, vali_data, vali_loader, criterion, mae_metric)
+        # Pass the fitted scaler to the test dataset (if available)
+        test_data, test_loader = data_provider(args, 'test')
+        if hasattr(test_data, 'set_scaler') and callable(test_data.set_scaler):
+            test_data.set_scaler(fitted_scaler)
+        test_loader, model = accelerator.prepare(test_loader, model)
+
+
+        model.eval()
         test_loss, test_mae_loss = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
         accelerator.print(
-            "Epoch: {0} | Train Loss: {1:.7f} Vali Loss: {2:.7f} Test Loss: {3:.7f} MAE Loss: {4:.7f}".format(
-                epoch + 1, train_loss, vali_loss, test_loss, test_mae_loss))
-
-        early_stopping(vali_loss, model, path)
-        if early_stopping.early_stop:
-            accelerator.print("Early stopping")
-            break
-
-        if args.lradj != 'TST':
-            if args.lradj == 'COS':
-                scheduler.step()
-                accelerator.print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-            else:
-                if epoch == 0:
-                    args.learning_rate = model_optim.param_groups[0]['lr']
-                    accelerator.print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-                adjust_learning_rate(accelerator, model_optim, scheduler, epoch + 1, args, printout=True)
-
-        else:
-            accelerator.print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
+            "Test Loss: {0:.7f} MAE Loss: {1:.7f}".format(test_loss, test_mae_loss))
 
 accelerator.wait_for_everyone()
 if accelerator.is_local_main_process:
