@@ -41,6 +41,7 @@ class Dataset_T1DM(Dataset):
         self.flag = flag
         self.root_path = root_path
         self.data_path = os.path.join(root_path, data_path)
+        self.features=features
         self.target = target
         self.scale = scale
         self.timeenc = timeenc
@@ -111,8 +112,12 @@ class Dataset_T1DM(Dataset):
         :param index: Index of the starting position for sequence generation.
         :return: Tuple of (input_sequence, target_sequence, time_features_input, time_features_target).
         """
-        seq_x = self.data_x[index:index + self.seq_len]
-        seq_y = self.data_y[index + self.seq_len:index + self.seq_len + self.pred_len]
+        feat_id = 0  # Default to the first feature (univariate)
+        if self.features == 'M':  # For multivariate input
+            feat_id = slice(None)  # Select all features
+
+        seq_x = self.data_x[index:index + self.seq_len, feat_id]
+        seq_y = self.data_y[index + self.seq_len:index + self.seq_len + self.pred_len, feat_id]
         seq_x_mark = self.data_stamp[index:index + self.seq_len]
         seq_y_mark = self.data_stamp[index + self.seq_len:index + self.seq_len + self.pred_len]
 

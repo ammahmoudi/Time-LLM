@@ -42,6 +42,10 @@ parser.add_argument('--seed', type=int, default=2021, help='random seed')
 parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
 parser.add_argument('--root_path', type=str, default='./dataset', help='root path of the data file')
 parser.add_argument('--data_path', type=str, default='ETTh1.csv', help='data file')
+parser.add_argument('--train_data_path', type=str, default=None, 
+                    help='Path to the training data file (if separate from test data).')
+parser.add_argument('--test_data_path', type=str, default=None, 
+                    help='Path to the testing data file (if separate from training data).')
 parser.add_argument('--features', type=str, default='M',
                     help='forecasting task, options:[M, S, MS]; '
                          'M:multivariate predict multivariate, S: univariate predict univariate, '
