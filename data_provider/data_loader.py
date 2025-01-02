@@ -9,6 +9,134 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+class Dataset_T1DM(Dataset):
+    def __init__(self, root_path, flag='train', size=None, features='S', data_path='train.csv',
+                 target='_value', scale=True, timeenc=0, freq='5min', percent=100,
+                 seasonal_patterns=None, scaler=None):
+        """
+        Dataset for T1DM glucose levels.
+
+        :param root_path: Root directory containing the dataset files.
+        :param flag: 'train', 'val', or 'test'.
+        :param size: Tuple of (seq_len, label_len, pred_len).
+        :param features: 'S' for single target or 'M' for multiple features.
+        :param data_path: Path to the dataset file (train or test file).
+        :param target: Target column name (default is '_value').
+        :param scale: Whether to scale the data (default is True).
+        :param timeenc: Whether to encode time features (0 for no, 1 for yes).
+        :param freq: Frequency of the time series (default is '5min').
+        :param percent: Percentage of training data (default is 100%).
+        :param scaler: external scaler ( used to pass thet train dataset fitted scaler to the test dataset)
+        """
+        if size is None:
+            self.seq_len = 12  # Default: 12 samples (60 minutes if every 5 mins)
+            self.label_len = 6  # Default: 6 samples (30 minutes)
+            self.pred_len = 12  # Default: Predict 12 samples (60 minutes)
+        else:
+            self.seq_len = size[0]
+            self.label_len = size[1]
+            self.pred_len = size[2]
+
+        assert flag in ['train', 'val', 'test']
+        self.flag = flag
+        self.root_path = root_path
+        self.data_path = os.path.join(root_path, data_path)
+        self.target = target
+        self.scale = scale
+        self.timeenc = timeenc
+        self.freq = freq
+        self.percent = percent
+        self.seasonal_patterns = seasonal_patterns
+        self.scaler = scaler 
+
+        self.__read_data__()
+
+        self.enc_in = self.data_x.shape[-1]  # Number of input features
+        self.tot_len = len(self.data_x) - self.seq_len - self.pred_len + 1  # Total valid sequences
+
+    def __read_data__(self):
+        """
+        Reads and preprocesses the data.
+        """
+        # Load the data
+        df_raw = pd.read_csv(self.data_path)
+
+        # Ensure correct columns exist
+        assert '_ts' in df_raw.columns and self.target in df_raw.columns, \
+            "Dataset must contain '_ts' (timestamp) and target columns."
+
+        # Sort by timestamp
+        df_raw['_ts'] = pd.to_datetime(df_raw['_ts'])
+        df_raw = df_raw.sort_values('_ts')
+        
+        if self.features == 'M' or self.features == 'MS':
+            cols_data = df_raw.columns[1:]
+            df_data = df_raw[cols_data]
+        elif self.features == 'S':
+            df_data = df_raw[[self.target]]
+        # Extract values
+        data = df_data.values
+         # Use external scaler if provided, else fit during training (if use differnet x and y fix this to scale properly)
+        if self.scale and self.flag == 'train':
+            if self.scaler is None:  # Fit a new scaler during training
+                self.scaler = StandardScaler()
+                self.scaler.fit(data)
+            data = self.scaler.transform(data)
+        elif self.scale:  # Use the provided scaler during testing
+            data = self.scaler.transform(data)
+            
+         # Process time features
+        df_stamp = df_raw[['_ts']]
+        if self.timeenc == 0:
+            # Manually extract time-related features
+            df_stamp['month'] = df_stamp['_ts'].dt.month
+            df_stamp['day'] = df_stamp['_ts'].dt.day
+            df_stamp['weekday'] = df_stamp['_ts'].dt.weekday
+            df_stamp['hour'] = df_stamp['_ts'].dt.hour
+            df_stamp['minute'] = df_stamp['_ts'].dt.minute // (60 // 12)  # Convert minutes into bins (5-min intervals)
+            self.data_stamp = df_stamp[['month', 'day', 'weekday', 'hour', 'minute']].values
+        elif self.timeenc == 1:
+            # Use a learned encoding for time features
+            self.data_stamp = time_features(pd.to_datetime(df_stamp['_ts'].values), freq=self.freq)
+            self.data_stamp = self.data_stamp.transpose(1, 0)
+       
+        self.data_x = data
+        self.data_y = data
+        
+
+    def __getitem__(self, index):
+        """
+        Returns the input sequence, target sequence, and time features.
+
+        :param index: Index of the starting position for sequence generation.
+        :return: Tuple of (input_sequence, target_sequence, time_features_input, time_features_target).
+        """
+        seq_x = self.data_x[index:index + self.seq_len]
+        seq_y = self.data_y[index + self.seq_len:index + self.seq_len + self.pred_len]
+        seq_x_mark = self.data_stamp[index:index + self.seq_len]
+        seq_y_mark = self.data_stamp[index + self.seq_len:index + self.seq_len + self.pred_len]
+
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        """
+        Returns the number of available samples in the dataset.
+        """
+        return self.tot_len
+
+    def inverse_transform(self, data):
+        """
+        Reverses the scaling transformation for interpretability.
+
+        :param data: Scaled data.
+        :return: Original data in the original scale.
+        """
+        if self.scale:
+            return self.scaler.inverse_transform(data)
+        else:
+            return data
+
+
 
 class Dataset_ean(Dataset):
     def __init__(self, root_path, flag='train', size=None,
