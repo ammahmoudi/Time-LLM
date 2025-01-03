@@ -146,24 +146,7 @@ for ii in range(args.itr):
 
     time_now = time.time()
 
-    train_steps = len(train_loader)
-    early_stopping = EarlyStopping(accelerator=accelerator, patience=args.patience)
 
-    trained_parameters = []
-    for p in model.parameters():
-        if p.requires_grad is True:
-            trained_parameters.append(p)
-
-    model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
-
-    if args.lradj == 'COS':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
-    else:
-        scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
-                                            steps_per_epoch=train_steps,
-                                            pct_start=args.pct_start,
-                                            epochs=args.train_epochs,
-                                            max_lr=args.learning_rate)
 
     criterion = nn.MSELoss()
     mae_metric = nn.L1Loss()
@@ -184,6 +167,28 @@ for ii in range(args.itr):
         # Validation Loader
         vali_data, vali_loader = data_provider(args, 'val')
         
+        if hasattr(vali_data, 'set_scaler') and callable(vali_data.set_scaler):
+            vali_data.set_scaler(fitted_scaler)
+
+
+        train_steps = len(train_loader)
+        early_stopping = EarlyStopping(accelerator=accelerator, patience=args.patience)
+
+        trained_parameters = []
+        for p in model.parameters():
+            if p.requires_grad is True:
+                trained_parameters.append(p)
+
+        model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
+
+        if args.lradj == 'COS':
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
+        else:
+            scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
+                                                steps_per_epoch=train_steps,
+                                                pct_start=args.pct_start,
+                                                epochs=args.train_epochs,
+                                                max_lr=args.learning_rate)
         # Test Loader (used only if is_testing == 1)
         if args.is_testing == 1:
             test_data, test_loader = data_provider(args, 'test')
