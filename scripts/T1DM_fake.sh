@@ -2,7 +2,7 @@ model_name=TimeLLM # Model name (e.g., TimeLLM, Autoformer, etc.)
 llama_layers=32 # Number of layers in the LLM model
 d_model=32 # Model hidden layer size
 d_ff=32 # Feed-forward network dimension
-comment='TimeLLM-T1DM' #Experiment comment for saving results and logs
+comment='TimeLLM-T1DM_fake' #Experiment comment for saving results and logs
 
 # Optimization and Training Settings
 train_epochs=1 #Number of training epochs
@@ -16,7 +16,7 @@ accelerate launch --multi_gpu --mixed_precision bf16 --num_processes $num_proces
 --task_name long_term_forecast \
 --is_training 1 \
 --is_testing 1 \
---root_path ./dataset/T1DM/ \
+--root_path ./dataset/T1DM_Fake/ \
 --train_data_path 570-ws-training.csv \
 --test_data_path 570-ws-testing.csv \
 --data T1DM \
