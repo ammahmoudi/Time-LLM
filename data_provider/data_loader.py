@@ -49,6 +49,7 @@ class Dataset_T1DM(Dataset):
         self.percent = percent
         self.seasonal_patterns = seasonal_patterns
         self.scaler = scaler 
+        self._data_transformed = False  # Initialize the flag for scaling status
 
         self.__read_data__()
 
@@ -75,19 +76,37 @@ class Dataset_T1DM(Dataset):
             df_data = df_raw[cols_data]
         elif self.features == 'S':
             df_data = df_raw[[self.target]]
+            
         # Extract values
         data = df_data.values
+        
+        # Split data for train and val modes
+        num_samples = len(data)
+        num_train = int(num_samples * 0.7)
+
+        if self.flag == 'train':
+            border1, border2 = 0, num_train
+        elif self.flag == 'val':
+            border1, border2 = num_train, num_samples
+        else:  # Test mode
+            border1, border2 = 0, num_samples
+
+        data = data[border1:border2]
+        
          # Use external scaler if provided, else fit during training (if use differnet x and y fix this to scale properly)
-        if self.scale and self.flag == 'train':
-            if self.scaler is None:  # Fit a new scaler during training
+        if self.scale:
+             if self.flag == 'train' and self.scaler is None:
+             # Fit a new scaler during training
                 self.scaler = StandardScaler()
                 self.scaler.fit(data)
-            data = self.scaler.transform(data)
-        elif self.scale:  # Use the provided scaler during testing
-            data = self.scaler.transform(data)
+             if self.scaler:  # Use the provided scaler during testing
+                data = self.scaler.transform(data)
+                self._data_transformed = True
+             elif self.scaler is None:
+                raise ValueError("Scaler must be provided for validation or test data.")
             
          # Process time features
-        df_stamp = df_raw[['_ts']]
+        df_stamp = df_raw.iloc[border1:border2][['_ts']]
         if self.timeenc == 0:
             # Manually extract time-related features
             df_stamp['month'] = df_stamp['_ts'].dt.month
@@ -140,6 +159,20 @@ class Dataset_T1DM(Dataset):
             return self.scaler.inverse_transform(data)
         else:
             return data
+    def set_scaler(self, scaler):
+        """
+        Set an external scaler for validation or test datasets and transform the data if not already scaled.
+
+        :param scaler: Pre-fitted scaler (e.g., from the training data).
+        """
+        self.scaler = scaler
+        if self.scaler and self.scale:
+            # Ensure the data is transformed only if it hasn't already been scaled
+            if not hasattr(self, '_data_transformed') or not self._data_transformed:
+                self.data_x = self.scaler.transform(self.data_x)
+                self.data_y = self.scaler.transform(self.data_y)
+                self._data_transformed = True  # Mark that the data has been transformed
+
 
 
 
