@@ -5,10 +5,10 @@ d_ff=32 # Feed-forward network dimension
 comment='TimeLLM-T1DM' #Experiment comment for saving results and logs
 
 # Optimization and Training Settings
-train_epochs=2 #Number of training epochs
+train_epochs=1 #Number of training epochs
 learning_rate=0.001 # Learning rate
-batch_size=7 # Batch size for training
-eval_batch_size=8 # Batch size for evaluation/testing
+batch_size=1 # Batch size for training
+eval_batch_size=1 # Batch size for evaluation/testing
 master_port=8388 # Communication port for distributed training
 num_process=1 # Number of processes for distributed training
 
@@ -51,7 +51,6 @@ accelerate launch --mixed_precision bf16 --num_processes $num_process --main_pro
 --learning_rate $learning_rate \
 --train_epochs $train_epochs \
 --patience 10 \
---use_amp \
 --lradj COS \
 --model_comment $comment \
 --prompt_domain 0

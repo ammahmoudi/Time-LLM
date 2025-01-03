@@ -130,20 +130,16 @@ class Dataset_T1DM(Dataset):
         
 
     def __getitem__(self, index):
-        """
-        Returns the input sequence, target sequence, and time features.
+        feat_id = index // self.tot_len
+        s_begin = index % self.tot_len
 
-        :param index: Index of the starting position for sequence generation.
-        :return: Tuple of (input_sequence, target_sequence, time_features_input, time_features_target).
-        """
-        feat_id = 0  # Default to the first feature (univariate)
-        if self.features == 'M':  # For multivariate input
-            feat_id = slice(None)  # Select all features
-
-        seq_x = self.data_x[index:index + self.seq_len, feat_id]
-        seq_y = self.data_y[index + self.seq_len:index + self.seq_len + self.pred_len, feat_id]
-        seq_x_mark = self.data_stamp[index:index + self.seq_len]
-        seq_y_mark = self.data_stamp[index + self.seq_len:index + self.seq_len + self.pred_len]
+        s_end = s_begin + self.seq_len
+        r_begin = s_end - self.label_len
+        r_end = r_begin + self.label_len + self.pred_len
+        seq_x = self.data_x[s_begin:s_end, feat_id:feat_id + 1]
+        seq_y = self.data_y[r_begin:r_end, feat_id:feat_id + 1]
+        seq_x_mark = self.data_stamp[s_begin:s_end]
+        seq_y_mark = self.data_stamp[r_begin:r_end]
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
