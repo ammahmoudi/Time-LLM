@@ -99,11 +99,16 @@ class Dataset_T1DM(Dataset):
              # Fit a new scaler during training
                 self.scaler = StandardScaler()
                 self.scaler.fit(data)
-             if self.scaler:  # Use the provided scaler during testing
                 data = self.scaler.transform(data)
                 self._data_transformed = True
-             elif self.scaler is None:
-                raise ValueError("Scaler must be provided for validation or test data.")
+                
+             elif self.scaler:  # Use the provided scaler
+                data = self.scaler.transform(data)
+                self._data_transformed = True
+             elif self.flag in ['val', 'test']:
+                # Defer scaling if scaler is not yet provided
+                self._raw_data = data
+                self._data_transformed = False
             
          # Process time features
         df_stamp = df_raw.iloc[border1:border2][['_ts']]
