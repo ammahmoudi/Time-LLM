@@ -1,1 +1,4 @@
-dataset
+dataset/*
+venv
+__pycache__
+!dataset/prompt_bank/
