@@ -30,6 +30,8 @@ def data_provider(args, flag):
      # Determine data file path
     if flag == 'train' and args.train_data_path:
         data_path = args.train_data_path
+    elif flag == 'val' and args.train_data_path:
+        data_path = args.train_data_path
     elif flag == 'test' and args.test_data_path:
         data_path = args.test_data_path
     else:
