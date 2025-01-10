@@ -44,7 +44,7 @@ accelerate launch --multi_gpu --mixed_precision bf16 --num_processes $num_proces
 --stride 8 \
 --patch_len 16 \
 --llm_layers $llama_layers \
---llm_model GPT2 \
+--llm_model LLAMA \
 --llm_dim 768 \
 --batch_size $batch_size \
 --eval_batch_size $eval_batch_size \

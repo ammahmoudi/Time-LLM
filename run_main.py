@@ -271,13 +271,15 @@ for ii in range(args.itr):
 
             accelerator.print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
-            vali_loss, vali_mae_loss = vali(args, accelerator, model, vali_data, vali_loader, criterion, mae_metric)
+            vali_loss, vali_mae_loss,_,_ = vali(args, accelerator, model, vali_data, vali_loader, criterion, mae_metric)
             accelerator.print(
                 "Epoch: {0} | Train Loss: {1:.7f} Vali Loss: {2:.7f}".format(
                     epoch + 1, train_loss, vali_loss))
             
             if args.is_testing == 1:
-                test_loss, test_mae_loss = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
+                test_loss, test_mae_loss,preds,trues = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
+                # print(preds)
+                # print(trues)
                 accelerator.print(
                     "Epoch: {0} | Test Loss: {1:.7f} Test MAE Loss: {2:.7f}".format(
                         epoch + 1, test_loss, test_mae_loss))
@@ -310,12 +312,21 @@ for ii in range(args.itr):
 
 
         model.eval()
-        test_loss, test_mae_loss = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
+        test_loss, test_mae_loss,preds,trues = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
+        # print(preds)
+        # print(trues)
         accelerator.print(
             "Test Loss: {0:.7f} MAE Loss: {1:.7f}".format(test_loss, test_mae_loss))
 
 accelerator.wait_for_everyone()
+import datetime
+
+# Save the model state with a unique name
+timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+checkpoint_name = f"{args.task_name}_{args.model_id}_{args.model}_{args.data}_features-{args.features}_seq-{args.seq_len}_lr-{args.learning_rate}_{args.model_comment}_{timestamp}.pt"
+checkpoint_path = os.path.join(args.checkpoints, checkpoint_name)
+
 if accelerator.is_local_main_process:
-    path = './checkpoints'  # unique checkpoint saving path
-    del_files(path)  # delete checkpoint files
-    accelerator.print('success delete checkpoints')
+    model = accelerator.unwrap_model(model)
+    torch.save(model.state_dict(), checkpoint_path)
+    print(f"Model checkpoint saved at {checkpoint_path}")

@@ -1,3 +1,4 @@
+import csv
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -137,6 +138,9 @@ def del_files(dir_path):
 def vali(args, accelerator, model, vali_data, vali_loader, criterion, mae_metric):
     total_loss = []
     total_mae_loss = []
+    preds=[]
+    trues=[]
+    
     model.eval()
     with torch.no_grad():
         for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(vali_loader)):
@@ -178,12 +182,14 @@ def vali(args, accelerator, model, vali_data, vali_loader, criterion, mae_metric
 
             total_loss.append(loss.item())
             total_mae_loss.append(mae_loss.item())
+            preds.append(pred)
+            trues.append(true)
 
     total_loss = np.average(total_loss)
     total_mae_loss = np.average(total_mae_loss)
 
     model.train()
-    return total_loss, total_mae_loss
+    return total_loss, total_mae_loss,preds,trues
 
 
 def test(args, accelerator, model, train_loader, vali_loader, criterion):
@@ -231,3 +237,11 @@ def load_content(args):
     with open('./dataset/prompt_bank/{0}.txt'.format(file), 'r') as f:
         content = f.read()
     return content
+
+def save_results_to_csv(preds, trues, file_path):
+    """Saves predictions and true values to a CSV file."""
+    with open(file_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Prediction", "True"])
+        for pred, true in zip(preds, trues):
+            writer.writerow([pred, true])

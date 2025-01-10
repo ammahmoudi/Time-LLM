@@ -1,4 +1,4 @@
-model_name=TimeLLM # Model name (e.g., TimeLLM, Autoformer, etc.)
+model_name=Autoformer # Model name (e.g., TimeLLM, Autoformer, etc.)
 llama_layers=32 # Number of layers in the LLM model
 d_model=32 # Model hidden layer size
 d_ff=32 # Feed-forward network dimension
@@ -22,7 +22,6 @@ accelerate launch --multi_gpu --mixed_precision bf16 --num_processes $num_proces
 --data T1DM \
 --features S \
 --target _value \
---freq 5min \
 --seq_len 12 \
 --label_len 6 \
 --pred_len 12 \
