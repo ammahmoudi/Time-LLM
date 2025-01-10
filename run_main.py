@@ -12,6 +12,7 @@ from data_provider.data_factory import data_provider
 import time
 import random
 import numpy as np
+import pandas as pd
 import os
 
 os.environ['CURL_CA_BUNDLE'] = ''
@@ -300,25 +301,71 @@ for ii in range(args.itr):
                     adjust_learning_rate(accelerator, model_optim, scheduler, epoch + 1, args, printout=True)
             else:
                 accelerator.print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
-
     elif args.is_training == 0 and args.is_testing == 1:
         print("Starting Testing...")
 
-        # Pass the fitted scaler to the test dataset (if available)
+        # Construct checkpoint path
+        checkpoint_path = os.path.join(args.checkpoints, f"{args.task_name}_{args.model_id}_{args.model}_{args.data}_features-{args.features}_seq-{args.seq_len}_lr-{args.learning_rate}_{args.model_comment}.pt")
+        
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
+        print(f"Loading model from checkpoint: {checkpoint_path}")
+        model.load_state_dict(torch.load(checkpoint_path, map_location=accelerator.device), strict=False)
+        model.eval()
+
+        # Prepare test data
         test_data, test_loader = data_provider(args, 'test')
         if hasattr(test_data, 'set_scaler') and callable(test_data.set_scaler):
             test_data.set_scaler(fitted_scaler)
+
         test_loader, model = accelerator.prepare(test_loader, model)
 
+        # Criterion and Metrics
+        criterion = nn.MSELoss()
+        mae_metric = nn.L1Loss()
 
-        model.eval()
-        test_loss, test_mae_loss,preds,trues = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
-        # print(preds)
-        # print(trues)
-        accelerator.print(
-            "Test Loss: {0:.7f} MAE Loss: {1:.7f}".format(test_loss, test_mae_loss))
+        # Evaluate using vali function
+        test_loss, test_mae_loss, preds, trues = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
+
+        # Log results
+        accelerator.print("Test Loss: {0:.7f} MAE Loss: {1:.7f}".format(test_loss, test_mae_loss))
+
+        # Optionally save predictions and ground truths for analysis
+        results = {
+            "Prediction": [p.cpu().numpy() for p in preds],
+            "True Value": [t.cpu().numpy() for t in trues]
+        }
+        output_csv = os.path.join(args.checkpoints, f"{args.task_name}_{args.model_id}_test_results.csv")
+        pd.DataFrame(results).to_csv(output_csv, index=False)
+        print(f"Test results saved to {output_csv}")
+
+
+    
+    # old train method
+    
+    # elif args.is_training == 0 and args.is_testing == 1:
+    #     print("Starting Testing...")
+
+    #     # Pass the fitted scaler to the test dataset (if available)
+    #     test_data, test_loader = data_provider(args, 'test')
+    #     if hasattr(test_data, 'set_scaler') and callable(test_data.set_scaler):
+    #         test_data.set_scaler(fitted_scaler)
+    #     test_loader, model = accelerator.prepare(test_loader, model)
+
+
+    #     model.eval()
+    #     test_loss, test_mae_loss,preds,trues = vali(args, accelerator, model, test_data, test_loader, criterion, mae_metric)
+    #     # print(preds)
+    #     # print(trues)
+    #     accelerator.print(
+    #         "Test Loss: {0:.7f} MAE Loss: {1:.7f}".format(test_loss, test_mae_loss))
+
+
 
 accelerator.wait_for_everyone()
+
+
 import datetime
 
 # Save the model state with a unique name
@@ -326,7 +373,7 @@ timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 checkpoint_name = f"{args.task_name}_{args.model_id}_{args.model}_{args.data}_features-{args.features}_seq-{args.seq_len}_lr-{args.learning_rate}_{args.model_comment}_{timestamp}.pt"
 checkpoint_path = os.path.join(args.checkpoints, checkpoint_name)
 
-if accelerator.is_local_main_process:
+if accelerator.is_local_main_process and args.is_training ==1:
     model = accelerator.unwrap_model(model)
     torch.save(model.state_dict(), checkpoint_path)
     print(f"Model checkpoint saved at {checkpoint_path}")
